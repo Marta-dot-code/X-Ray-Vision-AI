@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>X-Ray Vision AI</title>
+    <title>X-Ray Vision AI - Lab Mode</title>
     <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
     <style>
         :root {
@@ -24,7 +24,7 @@
             position: absolute; top: 0; left: 0; width: 100%;
             padding: 10px 20px; z-index: 100;
             border-bottom: 1px solid rgba(0, 242, 255, 0.3);
-            background: rgba(0,0,0,0.7);
+            background: rgba(0,0,0,0.8);
             font-size: 11px; letter-spacing: 2px; color: var(--neon-blue);
             box-sizing: border-box;
         }
@@ -41,17 +41,15 @@
             z-index: 50; pointer-events: none;
         }
 
-        polygon { pointer-events: auto; cursor: pointer; }
+        polygon { pointer-events: auto; cursor: pointer; transition: 0.2s; }
 
-        /* PULSANTE FOTOCAMERA (BIANCO) */
         .shutter-btn {
             position: absolute; bottom: 40px; left: 50%; transform: translateX(-50%);
             width: 75px; height: 75px; border-radius: 50%;
             background: white; border: 6px solid rgba(255,255,255,0.3);
-            cursor: pointer; z-index: 100; outline: none;
+            cursor: pointer; z-index: 100;
         }
 
-        /* PULSANTE RESET (ROSSO CON FRECCIA) */
         .reset-btn {
             position: absolute; bottom: 45px; right: 25px;
             width: 65px; height: 65px; border-radius: 50%;
@@ -59,16 +57,13 @@
             font-size: 35px; cursor: pointer; z-index: 110;
             display: flex; align-items: center; justify-content: center;
             box-shadow: 0 0 20px rgba(255, 59, 48, 0.5);
-            outline: none;
         }
-        .reset-btn:active { transform: scale(0.9); }
 
         #info-popup {
             position: absolute; bottom: 140px; left: 50%; transform: translateX(-50%);
             width: 85%; max-width: 400px;
             background: var(--panel-bg); border: 1px solid var(--neon-blue);
             padding: 20px; border-radius: 10px; display: none; z-index: 150;
-            box-sizing: border-box;
         }
 
         #loader {
@@ -85,22 +80,19 @@
 </head>
 <body>
 
-    <header>X-RAY VISION AI // SENSOR: ACTIVE</header>
+    <header>X-RAY VISION AI // SENSOR: ANALYTICAL_MODE</header>
 
     <div id="app-container">
-        <!-- VISTA CAMERA -->
         <div id="camera-layer" style="width:100%; height:100%; position:relative;">
             <video id="video" autoplay playsinline muted></video>
             <button class="shutter-btn" onclick="capturePhoto()"></button>
         </div>
 
-        <!-- VISTA RISULTATO -->
         <div id="result-layer" style="display:none; width:100%; height:100%; position:relative;">
             <div id="zoom-container" style="width:100%; height:100%; transform-origin: center;">
                 <img id="captured-image" src="">
                 <svg id="overlay-svg"></svg>
             </div>
-            <!-- Simbolo freccia che gira: ↻ -->
             <button class="reset-btn" onclick="resetApp()">&#8635;</button>
         </div>
     </div>
@@ -108,20 +100,18 @@
     <div id="info-popup" onclick="this.style.display='none'">
         <h3 id="info-title" style="margin:0; color:var(--neon-blue); text-transform:uppercase; font-size:16px;"></h3>
         <p id="info-desc" style="font-size:14px; line-height:1.5; margin-top:10px; color:#ddd;"></p>
-        <small style="color:var(--ai-gold); display:block; margin-top:15px; text-align:center;">[ TOCCA PER CHIUDERE ]</small>
+        <small style="color:var(--ai-gold); display:block; margin-top:15px; text-align:center;">[ CHIUDI ]</small>
     </div>
 
-    <div id="loader">
-        <div class="spinner"></div>
-        <p style="font-size:10px; letter-spacing:2px; color:var(--neon-blue);">ELABORAZIONE IA...</p>
-    </div>
+    <div id="loader"><div class="spinner"></div><p style="color:var(--neon-blue); font-size:10px;">FILTRAGGIO DATI...</p></div>
 
     <canvas id="hidden-canvas" style="display:none;"></canvas>
 
 <script>
     const ROBOFLOW_API_KEY = "NIogOGk8Bg0E5qViFynM";
     const MODEL_ENDPOINT = "x-ray-vision-segmentation/1"; 
-    
+    const CONFIDENCE_THRESHOLD = 0.65; // Mostra solo predizioni sicure al 65%+
+
     let databaseStrumenti = {};
     const video = document.getElementById('video');
     const cameraLayer = document.getElementById('camera-layer');
@@ -130,79 +120,27 @@
     const loader = document.getElementById('loader');
     const zoomContainer = document.getElementById('zoom-container');
 
-    let videoTrack = null;
-
-    // 1. Carica Database
     async function loadDatabase() {
         try {
             const r = await fetch('database_strumenti.json');
             databaseStrumenti = await r.json();
-            console.log("DB Pronto");
-        } catch (e) { console.error("Errore caricamento database_strumenti.json"); }
+        } catch (e) { console.error("DB Error"); }
     }
 
-    // 2. Avvio Fotocamera (Versione super-compatibile)
     async function initCamera() {
-        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-            try {
-                const stream = await navigator.mediaDevices.getUserMedia({ 
-                    video: { facingMode: "environment" },
-                    audio: false 
-                });
-                video.srcObject = stream;
-                
-                // Forza l'avvio del video per evitare lo schermo nero
-                video.onloadedmetadata = () => {
-                    video.play();
-                    videoTrack = stream.getVideoTracks()[0];
-                    setupHardwareZoom(videoTrack);
-                };
-            } catch (err) {
-                console.error("Errore getUserMedia:", err);
-                alert("Errore: Assicurati di aver dato i permessi alla fotocamera e di usare HTTPS.");
-            }
-        } else {
-            alert("Il tuo browser non supporta l'accesso alla fotocamera.");
-        }
-    }
-
-    // Gestione zoom hardware sicura (non blocca la camera se fallisce)
-    function setupHardwareZoom(track) {
-        if (!track || typeof track.getCapabilities !== 'function') return;
-        
         try {
-            const capabilities = track.getCapabilities();
-            if (capabilities.zoom) {
-                let startDist = 0;
-                let currentZoom = 1;
-
-                video.addEventListener('touchstart', e => {
-                    if (e.touches.length === 2) {
-                        startDist = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
-                    }
-                });
-
-                video.addEventListener('touchmove', e => {
-                    if (e.touches.length === 2 && track) {
-                        const dist = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
-                        const delta = dist > startDist ? 0.1 : -0.1;
-                        currentZoom = Math.min(Math.max(capabilities.zoom.min, currentZoom + delta), capabilities.zoom.max);
-                        track.applyConstraints({ advanced: [{ zoom: currentZoom }] }).catch(() => {});
-                        startDist = dist;
-                    }
-                });
-            }
-        } catch (e) { console.warn("Zoom hardware non supportato."); }
+            const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+            video.srcObject = stream;
+            video.onloadedmetadata = () => video.play();
+        } catch (err) { alert("Attiva la fotocamera"); }
     }
 
-    // 3. Scatto e Analisi
     async function capturePhoto() {
         loader.style.display = 'block';
         const canvas = document.getElementById('hidden-canvas');
         canvas.width = video.videoWidth;
         canvas.height = video.videoHeight;
         canvas.getContext('2d').drawImage(video, 0, 0);
-        
         const imageData = canvas.toDataURL('image/jpeg', 0.8);
         document.getElementById('captured-image').src = imageData;
 
@@ -215,37 +153,50 @@
                 headers: { "Content-Type": "application/x-www-form-urlencoded" }
             });
             displayResults(response.data.predictions, canvas.width, canvas.height);
-        } catch (err) {
-            alert("Errore nell'analisi dell'immagine.");
-            loader.style.display = 'none';
-        }
+        } catch (err) { alert("Errore IA"); loader.style.display = 'none'; }
     }
 
-    // 4. Visualizzazione Risultati e Colori
     function displayResults(predictions, width, height) {
         const svg = document.getElementById('overlay-svg');
         svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
         svg.innerHTML = '';
         
-        predictions.forEach(p => {
+        // 1. FILTRO CONFIDENZA + FILTRO AREA (elimina poligoni giganti di sfondo)
+        let filtered = predictions.filter(p => p.confidence > CONFIDENCE_THRESHOLD);
+        
+        // 2. ORDINAMENTO PER AREA (dal più grande al più piccolo)
+        // Così i dettagli piccoli vengono disegnati sopra i grandi e restano cliccabili
+        filtered.sort((a, b) => (b.width * b.height) - (a.width * a.height));
+
+        filtered.forEach(p => {
             if (!p.points) return;
-            const className = p.class.toLowerCase().trim();
-            const toolInfo = databaseStrumenti[className] || { colore: "#ffffff", titolo: p.class, descrizione: "Dettaglio IA" };
             
+            const className = p.class.toLowerCase().trim();
+            const toolInfo = databaseStrumenti[className] || { colore: "#ffffff", titolo: p.class, descrizione: "Analisi IA" };
+            const color = toolInfo.colore;
+
             const polygon = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
             const pointsString = p.points.map(pt => `${pt.x},${pt.y}`).join(' ');
             
             polygon.setAttribute('points', pointsString);
-            polygon.setAttribute('fill', toolInfo.colore);
-            polygon.setAttribute('fill-opacity', '0.5');
-            polygon.setAttribute('stroke', toolInfo.colore);
-            polygon.setAttribute('stroke-width', '3');
+            polygon.setAttribute('stroke', color);
+            polygon.setAttribute('stroke-width', '4');
+
+            // 3. FILTRO CLASSE (Outline per le superfici principali)
+            if (className === "ventral_surface" || className === "dorsal_surface") {
+                polygon.setAttribute('fill', 'transparent'); // Solo contorno
+            } else {
+                polygon.setAttribute('fill', color);
+                polygon.setAttribute('fill-opacity', '0.4');
+            }
             
             polygon.onclick = (e) => {
                 e.stopPropagation();
-                document.querySelectorAll('polygon').forEach(poly => poly.setAttribute('fill-opacity', '0.2'));
-                polygon.setAttribute('fill-opacity', '0.8');
-                
+                document.querySelectorAll('polygon').forEach(poly => {
+                    const isSurface = poly.getAttribute('fill') === 'transparent';
+                    poly.setAttribute('fill-opacity', isSurface ? '0' : '0.2');
+                });
+                polygon.setAttribute('fill-opacity', '0.7');
                 document.getElementById('info-title').innerText = toolInfo.titolo || p.class;
                 document.getElementById('info-desc').innerText = toolInfo.descrizione;
                 infoPopup.style.display = 'block';
@@ -267,7 +218,7 @@
         zoomContainer.style.transform = `scale(1)`;
     }
 
-    // Zoom Pinch-to-zoom sull'immagine statica finale
+    // Zoom Pinch-to-zoom immagine finale
     let currentScale = 1;
     let startDistRes = 0;
     resultLayer.addEventListener('touchstart', e => {
@@ -282,11 +233,7 @@
         }
     });
 
-    // Avvio
-    (async () => {
-        await loadDatabase();
-        await initCamera();
-    })();
+    (async () => { await loadDatabase(); await initCamera(); })();
 </script>
 </body>
 </html>
