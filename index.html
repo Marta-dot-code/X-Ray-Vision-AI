@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>X-Ray Vision AI</title>
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    <style>
+        :root {
+            --neon-blue: #00f2ff;
+            --ai-gold: #ffcc00;
+            --bg-dark: #0a0a0a;
+            --panel-bg: rgba(10, 10, 10, 0.95);
+        }
+
+        body, html { 
+            margin: 0; padding: 0; height: 100%; 
+            background: #000; color: white; 
+            font-family: 'Courier New', Courier, monospace;
+            overflow: hidden;
+        }
+
+        header {
+            position: absolute; top: 0; left: 0; width: 100%;
+            padding: 10px 20px; z-index: 100;
+            border-bottom: 1px solid rgba(0, 242, 255, 0.3);
+            background: rgba(0,0,0,0.7);
+            font-size: 11px; letter-spacing: 2px; color: var(--neon-blue);
+            box-sizing: border-box;
+        }
+
+        #app-container {
+            position: relative; width: 100vw; height: 100vh;
+            display: flex; justify-content: center; align-items: center;
+        }
+
+        video, #captured-image { width: 100%; height: 100%; object-fit: cover; background: #000; }
+
+        #overlay-svg {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            z-index: 50; pointer-events: none;
+        }
+
+        polygon { pointer-events: auto; cursor: pointer; }
+
+        /* PULSANTE FOTOCAMERA (BIANCO) */
+        .shutter-btn {
+            position: absolute; bottom: 40px; left: 50%; transform: translateX(-50%);
+            width: 75px; height: 75px; border-radius: 50%;
+            background: white; border: 6px solid rgba(255,255,255,0.3);
+            cursor: pointer; z-index: 100; outline: none;
+        }
+
+        /* PULSANTE RESET (ROSSO CON FRECCIA) */
+        .reset-btn {
+            position: absolute; bottom: 45px; right: 25px;
+            width: 65px; height: 65px; border-radius: 50%;
+            background: #ff3b30; color: white; border: none;
+            font-size: 35px; cursor: pointer; z-index: 110;
+            display: flex; align-items: center; justify-content: center;
+            box-shadow: 0 0 20px rgba(255, 59, 48, 0.5);
+            outline: none;
+        }
+        .reset-btn:active { transform: scale(0.9); }
+
+        #info-popup {
+            position: absolute; bottom: 140px; left: 50%; transform: translateX(-50%);
+            width: 85%; max-width: 400px;
+            background: var(--panel-bg); border: 1px solid var(--neon-blue);
+            padding: 20px; border-radius: 10px; display: none; z-index: 150;
+            box-sizing: border-box;
+        }
+
+        #loader {
+            display: none; position: absolute; top: 50%; left: 50%;
+            transform: translate(-50%, -50%); z-index: 200; text-align: center;
+        }
+        .spinner {
+            width: 40px; height: 40px; border: 3px solid rgba(0,242,255,0.1);
+            border-top: 3px solid var(--neon-blue); border-radius: 50%;
+            animation: spin 1s linear infinite; margin-bottom: 10px;
+        }
+        @keyframes spin { 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+
+    <header>X-RAY VISION AI // SENSOR: ACTIVE</header>
+
+    <div id="app-container">
+        <!-- VISTA CAMERA -->
+        <div id="camera-layer" style="width:100%; height:100%; position:relative;">
+            <video id="video" autoplay playsinline muted></video>
+            <button class="shutter-btn" onclick="capturePhoto()"></button>
+        </div>
+
+        <!-- VISTA RISULTATO -->
+        <div id="result-layer" style="display:none; width:100%; height:100%; position:relative;">
+            <div id="zoom-container" style="width:100%; height:100%; transform-origin: center;">
+                <img id="captured-image" src="">
+                <svg id="overlay-svg"></svg>
+            </div>
+            <!-- Simbolo freccia che gira: ↻ -->
+            <button class="reset-btn" onclick="resetApp()">&#8635;</button>
+        </div>
+    </div>
+
+    <div id="info-popup" onclick="this.style.display='none'">
+        <h3 id="info-title" style="margin:0; color:var(--neon-blue); text-transform:uppercase; font-size:16px;"></h3>
+        <p id="info-desc" style="font-size:14px; line-height:1.5; margin-top:10px; color:#ddd;"></p>
+        <small style="color:var(--ai-gold); display:block; margin-top:15px; text-align:center;">[ TOCCA PER CHIUDERE ]</small>
+    </div>
+
+    <div id="loader">
+        <div class="spinner"></div>
+        <p style="font-size:10px; letter-spacing:2px; color:var(--neon-blue);">ELABORAZIONE IA...</p>
+    </div>
+
+    <canvas id="hidden-canvas" style="display:none;"></canvas>
+
+<script>
+    const ROBOFLOW_API_KEY = "NIogOGk8Bg0E5qViFynM";
+    const MODEL_ENDPOINT = "x-ray-vision-segmentation/1"; 
+    
+    let databaseStrumenti = {};
+    const video = document.getElementById('video');
+    const cameraLayer = document.getElementById('camera-layer');
+    const resultLayer = document.getElementById('result-layer');
+    const infoPopup = document.getElementById('info-popup');
+    const loader = document.getElementById('loader');
+    const zoomContainer = document.getElementById('zoom-container');
+
+    let videoTrack = null;
+
+    // 1. Carica Database
+    async function loadDatabase() {
+        try {
+            const r = await fetch('database_strumenti.json');
+            databaseStrumenti = await r.json();
+            console.log("DB Pronto");
+        } catch (e) { console.error("Errore caricamento database_strumenti.json"); }
+    }
+
+    // 2. Avvio Fotocamera (Versione super-compatibile)
+    async function initCamera() {
+        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { facingMode: "environment" },
+                    audio: false 
+                });
+                video.srcObject = stream;
+                
+                // Forza l'avvio del video per evitare lo schermo nero
+                video.onloadedmetadata = () => {
+                    video.play();
+                    videoTrack = stream.getVideoTracks()[0];
+                    setupHardwareZoom(videoTrack);
+                };
+            } catch (err) {
+                console.error("Errore getUserMedia:", err);
+                alert("Errore: Assicurati di aver dato i permessi alla fotocamera e di usare HTTPS.");
+            }
+        } else {
+            alert("Il tuo browser non supporta l'accesso alla fotocamera.");
+        }
+    }
+
+    // Gestione zoom hardware sicura (non blocca la camera se fallisce)
+    function setupHardwareZoom(track) {
+        if (!track || typeof track.getCapabilities !== 'function') return;
+        
+        try {
+            const capabilities = track.getCapabilities();
+            if (capabilities.zoom) {
+                let startDist = 0;
+                let currentZoom = 1;
+
+                video.addEventListener('touchstart', e => {
+                    if (e.touches.length === 2) {
+                        startDist = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
+                    }
+                });
+
+                video.addEventListener('touchmove', e => {
+                    if (e.touches.length === 2 && track) {
+                        const dist = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
+                        const delta = dist > startDist ? 0.1 : -0.1;
+                        currentZoom = Math.min(Math.max(capabilities.zoom.min, currentZoom + delta), capabilities.zoom.max);
+                        track.applyConstraints({ advanced: [{ zoom: currentZoom }] }).catch(() => {});
+                        startDist = dist;
+                    }
+                });
+            }
+        } catch (e) { console.warn("Zoom hardware non supportato."); }
+    }
+
+    // 3. Scatto e Analisi
+    async function capturePhoto() {
+        loader.style.display = 'block';
+        const canvas = document.getElementById('hidden-canvas');
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        canvas.getContext('2d').drawImage(video, 0, 0);
+        
+        const imageData = canvas.toDataURL('image/jpeg', 0.8);
+        document.getElementById('captured-image').src = imageData;
+
+        try {
+            const response = await axios({
+                method: "POST",
+                url: `https://detect.roboflow.com/${MODEL_ENDPOINT}`, 
+                params: { api_key: ROBOFLOW_API_KEY, format: "json" },
+                data: imageData.split(',')[1],
+                headers: { "Content-Type": "application/x-www-form-urlencoded" }
+            });
+            displayResults(response.data.predictions, canvas.width, canvas.height);
+        } catch (err) {
+            alert("Errore nell'analisi dell'immagine.");
+            loader.style.display = 'none';
+        }
+    }
+
+    // 4. Visualizzazione Risultati e Colori
+    function displayResults(predictions, width, height) {
+        const svg = document.getElementById('overlay-svg');
+        svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+        svg.innerHTML = '';
+        
+        predictions.forEach(p => {
+            if (!p.points) return;
+            const className = p.class.toLowerCase().trim();
+            const toolInfo = databaseStrumenti[className] || { colore: "#ffffff", titolo: p.class, descrizione: "Dettaglio IA" };
+            
+            const polygon = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
+            const pointsString = p.points.map(pt => `${pt.x},${pt.y}`).join(' ');
+            
+            polygon.setAttribute('points', pointsString);
+            polygon.setAttribute('fill', toolInfo.colore);
+            polygon.setAttribute('fill-opacity', '0.5');
+            polygon.setAttribute('stroke', toolInfo.colore);
+            polygon.setAttribute('stroke-width', '3');
+            
+            polygon.onclick = (e) => {
+                e.stopPropagation();
+                document.querySelectorAll('polygon').forEach(poly => poly.setAttribute('fill-opacity', '0.2'));
+                polygon.setAttribute('fill-opacity', '0.8');
+                
+                document.getElementById('info-title').innerText = toolInfo.titolo || p.class;
+                document.getElementById('info-desc').innerText = toolInfo.descrizione;
+                infoPopup.style.display = 'block';
+            };
+            svg.appendChild(polygon);
+        });
+
+        loader.style.display = 'none';
+        cameraLayer.style.display = 'none';
+        resultLayer.style.display = 'block';
+    }
+
+    function resetApp() {
+        resultLayer.style.display = 'none';
+        cameraLayer.style.display = 'block';
+        infoPopup.style.display = 'none';
+        document.getElementById('overlay-svg').innerHTML = '';
+        currentScale = 1;
+        zoomContainer.style.transform = `scale(1)`;
+    }
+
+    // Zoom Pinch-to-zoom sull'immagine statica finale
+    let currentScale = 1;
+    let startDistRes = 0;
+    resultLayer.addEventListener('touchstart', e => {
+        if (e.touches.length === 2) startDistRes = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
+    });
+    resultLayer.addEventListener('touchmove', e => {
+        if (e.touches.length === 2) {
+            const dist = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
+            currentScale = Math.min(Math.max(1, currentScale * (dist / startDistRes)), 4);
+            zoomContainer.style.transform = `scale(${currentScale})`;
+            startDistRes = dist;
+        }
+    });
+
+    // Avvio
+    (async () => {
+        await loadDatabase();
+        await initCamera();
+    })();
+</script>
+</body>
+</html>
