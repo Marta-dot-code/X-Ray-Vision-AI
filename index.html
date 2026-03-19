@@ -123,7 +123,7 @@
 <script>
     const ROBOFLOW_API_KEY = "NIogOGk8Bg0E5qViFynM";
     const MODEL_ENDPOINT = "x-ray-vision-segmentation/1"; 
-    const CONFIDENCE_THRESHOLD = 0.65;
+    const CONFIDENCE_THRESHOLD = 0.40; // Abbassata per sicurezza a 0.40
 
     let databaseStrumenti = {};
     const video = document.getElementById('video');
@@ -132,7 +132,6 @@
     const infoPopup = document.getElementById('info-popup');
     const loader = document.getElementById('loader');
     const capturedImage = document.getElementById('captured-image');
-    const zoomContainer = document.getElementById('zoom-container');
     const svg = document.getElementById('overlay-svg');
 
     async function loadDatabase() {
@@ -159,40 +158,47 @@
         const imageData = canvas.toDataURL('image/jpeg', 0.9);
         capturedImage.src = imageData;
 
-        try {
-            const response = await axios({
-                method: "POST",
-                url: `https://detect.roboflow.com/${MODEL_ENDPOINT}`, 
-                params: { api_key: ROBOFLOW_API_KEY, format: "json" },
-                data: imageData.split(',')[1],
-                headers: { "Content-Type": "application/x-www-form-urlencoded" }
-            });
-            displayResults(response.data.predictions, canvas.width, canvas.height);
-        } catch (err) { alert("Errore Analisi"); loader.style.display = 'none'; }
+        // Piccola attesa per essere sicuri che l'immagine sia caricata nel DOM
+        capturedImage.onload = async () => {
+            try {
+                const response = await axios({
+                    method: "POST",
+                    url: `https://detect.roboflow.com/${MODEL_ENDPOINT}`, 
+                    params: { api_key: ROBOFLOW_API_KEY, format: "json" },
+                    data: imageData.split(',')[1],
+                    headers: { "Content-Type": "application/x-www-form-urlencoded" }
+                });
+                console.log("Dati ricevuti:", response.data); // Debug in console
+                displayResults(response.data.predictions, canvas.width, canvas.height);
+            } catch (err) { 
+                console.error(err);
+                alert("Errore Analisi IA"); 
+                loader.style.display = 'none'; 
+            }
+        };
     }
 
     function displayResults(predictions, width, height) {
-        // Allineamento preciso dell'SVG all'immagine visualizzata
-        const containerRect = capturedImage.getBoundingClientRect();
-        const imgAspect = width / height;
-        const containerAspect = containerRect.width / containerRect.height;
-        
-        let drawWidth, drawHeight;
-        if (imgAspect > containerAspect) {
-            drawWidth = containerRect.width;
-            drawHeight = containerRect.width / imgAspect;
-        } else {
-            drawHeight = containerRect.height;
-            drawWidth = containerRect.height * imgAspect;
-        }
+        // Mostriamo subito il layer del risultato per permettere il calcolo delle dimensioni
+        cameraLayer.style.display = 'none';
+        resultLayer.style.display = 'block';
 
-        svg.style.width = drawWidth + "px";
-        svg.style.height = drawHeight + "px";
+        // Calcolo dimensioni per allineamento perfetto
+        const rect = capturedImage.getBoundingClientRect();
+        svg.style.width = rect.width + "px";
+        svg.style.height = rect.height + "px";
         svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
         svg.innerHTML = '';
         
         let filtered = predictions.filter(p => p.confidence > CONFIDENCE_THRESHOLD);
-        // Ordiniamo: prima i grandi (sfondo), poi i piccoli (dettagli sopra)
+        
+        if (filtered.length === 0) {
+            alert("L'IA non è abbastanza sicura del risultato. Prova a scattare di nuovo con più luce.");
+            resetApp();
+            return;
+        }
+
+        // Ordine: Grandi sotto, Piccoli sopra
         filtered.sort((a, b) => (b.width * b.height) - (a.width * a.height));
 
         filtered.forEach((p, index) => {
@@ -202,26 +208,37 @@
             const toolInfo = databaseStrumenti[className] || { colore: "#ffffff", titolo: p.class, descrizione: "Dettaglio" };
             const color = toolInfo.colore;
 
-            // Creazione Poligono elegante
+            // Disegno Poligono
             const polygon = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
             const pointsString = p.points.map(pt => `${pt.x},${pt.y}`).join(' ');
             
             polygon.setAttribute('points', pointsString);
             polygon.setAttribute('stroke', color);
-            polygon.setAttribute('stroke-width', '2'); // Linea più sottile
+            polygon.setAttribute('stroke-width', '2');
             
             if (className === "ventral_surface" || className === "dorsal_surface") {
                 polygon.setAttribute('fill', 'transparent'); 
-                polygon.setAttribute('stroke-width', '3');
+                polygon.setAttribute('stroke-width', '4');
             } else {
                 polygon.setAttribute('fill', color);
-                polygon.setAttribute('fill-opacity', '0.25'); // Più trasparente e pulito
+                polygon.setAttribute('fill-opacity', '0.3');
             }
+            
+            // Etichetta Numerica (Label)
+            const centerX = p.points.reduce((sum, pt) => sum + pt.x, 0) / p.points.length;
+            const centerY = p.points.reduce((sum, pt) => sum + pt.y, 0) / p.points.length;
+
+            const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+            text.setAttribute('x', centerX);
+            text.setAttribute('y', centerY);
+            text.setAttribute('class', 'poly-label');
+            text.setAttribute('text-anchor', 'middle');
+            text.textContent = index + 1;
 
             polygon.onclick = (e) => {
                 e.stopPropagation();
                 document.querySelectorAll('polygon').forEach(poly => poly.setAttribute('fill-opacity', '0.1'));
-                polygon.setAttribute('fill-opacity', '0.6');
+                polygon.setAttribute('fill-opacity', '0.7');
                 document.getElementById('info-title').innerText = (index + 1) + ". " + (toolInfo.titolo || p.class);
                 document.getElementById('info-desc').innerText = toolInfo.descrizione;
                 infoPopup.style.display = 'block';
@@ -232,8 +249,6 @@
         });
 
         loader.style.display = 'none';
-        cameraLayer.style.display = 'none';
-        resultLayer.style.display = 'block';
     }
 
     function resetApp() {
@@ -241,22 +256,8 @@
         cameraLayer.style.display = 'block';
         infoPopup.style.display = 'none';
         svg.innerHTML = '';
+        loader.style.display = 'none';
     }
-
-    // Zoom Pinch-to-zoom immagine finale
-    let currentScale = 1;
-    let startDistRes = 0;
-    resultLayer.addEventListener('touchstart', e => {
-        if (e.touches.length === 2) startDistRes = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
-    });
-    resultLayer.addEventListener('touchmove', e => {
-        if (e.touches.length === 2) {
-            const dist = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
-            currentScale = Math.min(Math.max(1, currentScale * (dist / startDistRes)), 4);
-            zoomContainer.style.transform = `scale(${currentScale})`;
-            startDistRes = dist;
-        }
-    });
 
     (async () => { await loadDatabase(); await initCamera(); })();
 </script>
