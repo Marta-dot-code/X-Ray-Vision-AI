@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>X-Ray Vision AI - Lab Mode</title>
+    <title>X-Ray Vision AI</title>
     <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
     <style>
         :root {
@@ -23,9 +23,9 @@
         header {
             position: absolute; top: 0; left: 0; width: 100%;
             padding: 10px 20px; z-index: 100;
-            border-bottom: 1px solid rgba(0, 242, 255, 0.3);
+            border-bottom: 1px solid rgba(0, 242, 255, 0.2);
             background: rgba(0,0,0,0.8);
-            font-size: 11px; letter-spacing: 2px; color: var(--neon-blue);
+            font-size: 10px; letter-spacing: 2px; color: var(--neon-blue);
             box-sizing: border-box;
         }
 
@@ -34,14 +34,27 @@
             display: flex; justify-content: center; align-items: center;
         }
 
-        video, #captured-image { width: 100%; height: 100%; object-fit: cover; background: #000; }
+        /* Cambiato object-fit a contain per garantire che SVG e Immagine siano identici */
+        video, #captured-image { 
+            width: 100%; height: 100%; 
+            object-fit: contain; 
+            background: #000; 
+        }
 
         #overlay-svg {
-            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            position: absolute; 
+            top: 50%; left: 50%; 
+            transform: translate(-50%, -50%);
             z-index: 50; pointer-events: none;
         }
 
-        polygon { pointer-events: auto; cursor: pointer; transition: 0.2s; }
+        /* Stile Poligoni: Linee sottili ed eleganti */
+        polygon { 
+            pointer-events: auto; 
+            cursor: pointer; 
+            stroke-linejoin: round;
+            transition: all 0.2s; 
+        }
 
         .shutter-btn {
             position: absolute; bottom: 40px; left: 50%; transform: translateX(-50%);
@@ -52,11 +65,11 @@
 
         .reset-btn {
             position: absolute; bottom: 45px; right: 25px;
-            width: 65px; height: 65px; border-radius: 50%;
+            width: 60px; height: 60px; border-radius: 50%;
             background: #ff3b30; color: white; border: none;
-            font-size: 35px; cursor: pointer; z-index: 110;
+            font-size: 30px; cursor: pointer; z-index: 110;
             display: flex; align-items: center; justify-content: center;
-            box-shadow: 0 0 20px rgba(255, 59, 48, 0.5);
+            box-shadow: 0 0 15px rgba(255, 59, 48, 0.4);
         }
 
         #info-popup {
@@ -80,7 +93,7 @@
 </head>
 <body>
 
-    <header>X-RAY VISION AI // SENSOR: ANALYTICAL_MODE</header>
+    <header>X-RAY VISION AI</header>
 
     <div id="app-container">
         <div id="camera-layer" style="width:100%; height:100%; position:relative;">
@@ -89,7 +102,7 @@
         </div>
 
         <div id="result-layer" style="display:none; width:100%; height:100%; position:relative;">
-            <div id="zoom-container" style="width:100%; height:100%; transform-origin: center;">
+            <div id="zoom-container" style="width:100%; height:100%; display:flex; justify-content:center; align-items:center;">
                 <img id="captured-image" src="">
                 <svg id="overlay-svg"></svg>
             </div>
@@ -98,19 +111,19 @@
     </div>
 
     <div id="info-popup" onclick="this.style.display='none'">
-        <h3 id="info-title" style="margin:0; color:var(--neon-blue); text-transform:uppercase; font-size:16px;"></h3>
-        <p id="info-desc" style="font-size:14px; line-height:1.5; margin-top:10px; color:#ddd;"></p>
-        <small style="color:var(--ai-gold); display:block; margin-top:15px; text-align:center;">[ CHIUDI ]</small>
+        <h3 id="info-title" style="margin:0; color:var(--neon-blue); font-size:16px;"></h3>
+        <p id="info-desc" style="font-size:14px; line-height:1.5; margin-top:10px;"></p>
+        <small style="color:var(--ai-gold);">[ CHIUDI ]</small>
     </div>
 
-    <div id="loader"><div class="spinner"></div><p style="color:var(--neon-blue); font-size:10px;">FILTRAGGIO DATI...</p></div>
+    <div id="loader"><div class="spinner"></div><p style="color:var(--neon-blue); font-size:10px;">RENDERING...</p></div>
 
     <canvas id="hidden-canvas" style="display:none;"></canvas>
 
 <script>
     const ROBOFLOW_API_KEY = "NIogOGk8Bg0E5qViFynM";
     const MODEL_ENDPOINT = "x-ray-vision-segmentation/1"; 
-    const CONFIDENCE_THRESHOLD = 0.65; // Mostra solo predizioni sicure al 65%+
+    const CONFIDENCE_THRESHOLD = 0.60;
 
     let databaseStrumenti = {};
     const video = document.getElementById('video');
@@ -118,13 +131,14 @@
     const resultLayer = document.getElementById('result-layer');
     const infoPopup = document.getElementById('info-popup');
     const loader = document.getElementById('loader');
-    const zoomContainer = document.getElementById('zoom-container');
+    const capturedImage = document.getElementById('captured-image');
+    const svg = document.getElementById('overlay-svg');
 
     async function loadDatabase() {
         try {
             const r = await fetch('database_strumenti.json');
             databaseStrumenti = await r.json();
-        } catch (e) { console.error("DB Error"); }
+        } catch (e) { console.error("DB Load Error"); }
     }
 
     async function initCamera() {
@@ -132,7 +146,7 @@
             const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
             video.srcObject = stream;
             video.onloadedmetadata = () => video.play();
-        } catch (err) { alert("Attiva la fotocamera"); }
+        } catch (err) { alert("Attiva fotocamera"); }
     }
 
     async function capturePhoto() {
@@ -141,8 +155,8 @@
         canvas.width = video.videoWidth;
         canvas.height = video.videoHeight;
         canvas.getContext('2d').drawImage(video, 0, 0);
-        const imageData = canvas.toDataURL('image/jpeg', 0.8);
-        document.getElementById('captured-image').src = imageData;
+        const imageData = canvas.toDataURL('image/jpeg', 0.9);
+        capturedImage.src = imageData;
 
         try {
             const response = await axios({
@@ -153,55 +167,78 @@
                 headers: { "Content-Type": "application/x-www-form-urlencoded" }
             });
             displayResults(response.data.predictions, canvas.width, canvas.height);
-        } catch (err) { alert("Errore IA"); loader.style.display = 'none'; }
+        } catch (err) { alert("Errore Analisi"); loader.style.display = 'none'; }
     }
 
     function displayResults(predictions, width, height) {
-        const svg = document.getElementById('overlay-svg');
+        // Allineamento preciso dell'SVG all'immagine visualizzata
+        const containerRect = capturedImage.getBoundingClientRect();
+        const imgAspect = width / height;
+        const containerAspect = containerRect.width / containerRect.height;
+        
+        let drawWidth, drawHeight;
+        if (imgAspect > containerAspect) {
+            drawWidth = containerRect.width;
+            drawHeight = containerRect.width / imgAspect;
+        } else {
+            drawHeight = containerRect.height;
+            drawWidth = containerRect.height * imgAspect;
+        }
+
+        svg.style.width = drawWidth + "px";
+        svg.style.height = drawHeight + "px";
         svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
         svg.innerHTML = '';
         
-        // 1. FILTRO CONFIDENZA + FILTRO AREA (elimina poligoni giganti di sfondo)
         let filtered = predictions.filter(p => p.confidence > CONFIDENCE_THRESHOLD);
-        
-        // 2. ORDINAMENTO PER AREA (dal più grande al più piccolo)
-        // Così i dettagli piccoli vengono disegnati sopra i grandi e restano cliccabili
+        // Ordiniamo: prima i grandi (sfondo), poi i piccoli (dettagli sopra)
         filtered.sort((a, b) => (b.width * b.height) - (a.width * a.height));
 
-        filtered.forEach(p => {
+        filtered.forEach((p, index) => {
             if (!p.points) return;
             
             const className = p.class.toLowerCase().trim();
-            const toolInfo = databaseStrumenti[className] || { colore: "#ffffff", titolo: p.class, descrizione: "Analisi IA" };
+            const toolInfo = databaseStrumenti[className] || { colore: "#ffffff", titolo: p.class, descrizione: "Dettaglio" };
             const color = toolInfo.colore;
 
+            // Creazione Poligono elegante
             const polygon = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
             const pointsString = p.points.map(pt => `${pt.x},${pt.y}`).join(' ');
             
             polygon.setAttribute('points', pointsString);
             polygon.setAttribute('stroke', color);
-            polygon.setAttribute('stroke-width', '4');
-
-            // 3. FILTRO CLASSE (Outline per le superfici principali)
+            polygon.setAttribute('stroke-width', '2'); // Linea più sottile
+            
             if (className === "ventral_surface" || className === "dorsal_surface") {
-                polygon.setAttribute('fill', 'transparent'); // Solo contorno
+                polygon.setAttribute('fill', 'transparent'); 
+                polygon.setAttribute('stroke-width', '3');
             } else {
                 polygon.setAttribute('fill', color);
-                polygon.setAttribute('fill-opacity', '0.4');
+                polygon.setAttribute('fill-opacity', '0.25'); // Più trasparente e pulito
             }
             
+            // Calcolo del centro per il numero (Label)
+            const centerX = p.points.reduce((sum, pt) => sum + pt.x, 0) / p.points.length;
+            const centerY = p.points.reduce((sum, pt) => sum + pt.y, 0) / p.points.length;
+
+            const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+            text.setAttribute('x', centerX);
+            text.setAttribute('y', centerY);
+            text.setAttribute('class', 'poly-label');
+            text.setAttribute('text-anchor', 'middle');
+            text.textContent = index + 1; // Numero identificativo
+
             polygon.onclick = (e) => {
                 e.stopPropagation();
-                document.querySelectorAll('polygon').forEach(poly => {
-                    const isSurface = poly.getAttribute('fill') === 'transparent';
-                    poly.setAttribute('fill-opacity', isSurface ? '0' : '0.2');
-                });
-                polygon.setAttribute('fill-opacity', '0.7');
-                document.getElementById('info-title').innerText = toolInfo.titolo || p.class;
+                document.querySelectorAll('polygon').forEach(poly => poly.setAttribute('fill-opacity', '0.1'));
+                polygon.setAttribute('fill-opacity', '0.6');
+                document.getElementById('info-title').innerText = (index + 1) + ". " + (toolInfo.titolo || p.class);
                 document.getElementById('info-desc').innerText = toolInfo.descrizione;
                 infoPopup.style.display = 'block';
             };
+
             svg.appendChild(polygon);
+            svg.appendChild(text);
         });
 
         loader.style.display = 'none';
@@ -213,25 +250,8 @@
         resultLayer.style.display = 'none';
         cameraLayer.style.display = 'block';
         infoPopup.style.display = 'none';
-        document.getElementById('overlay-svg').innerHTML = '';
-        currentScale = 1;
-        zoomContainer.style.transform = `scale(1)`;
+        svg.innerHTML = '';
     }
-
-    // Zoom Pinch-to-zoom immagine finale
-    let currentScale = 1;
-    let startDistRes = 0;
-    resultLayer.addEventListener('touchstart', e => {
-        if (e.touches.length === 2) startDistRes = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
-    });
-    resultLayer.addEventListener('touchmove', e => {
-        if (e.touches.length === 2) {
-            const dist = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
-            currentScale = Math.min(Math.max(1, currentScale * (dist / startDistRes)), 4);
-            zoomContainer.style.transform = `scale(${currentScale})`;
-            startDistRes = dist;
-        }
-    });
 
     (async () => { await loadDatabase(); await initCamera(); })();
 </script>
