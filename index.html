@@ -123,7 +123,7 @@
 <script>
     const ROBOFLOW_API_KEY = "NIogOGk8Bg0E5qViFynM";
     const MODEL_ENDPOINT = "x-ray-vision-segmentation/1"; 
-    const CONFIDENCE_THRESHOLD = 0.60;
+    const CONFIDENCE_THRESHOLD = 0.65;
 
     let databaseStrumenti = {};
     const video = document.getElementById('video');
@@ -132,6 +132,7 @@
     const infoPopup = document.getElementById('info-popup');
     const loader = document.getElementById('loader');
     const capturedImage = document.getElementById('captured-image');
+    const zoomContainer = document.getElementById('zoom-container');
     const svg = document.getElementById('overlay-svg');
 
     async function loadDatabase() {
@@ -216,17 +217,6 @@
                 polygon.setAttribute('fill', color);
                 polygon.setAttribute('fill-opacity', '0.25'); // Più trasparente e pulito
             }
-            
-            // Calcolo del centro per il numero (Label)
-            const centerX = p.points.reduce((sum, pt) => sum + pt.x, 0) / p.points.length;
-            const centerY = p.points.reduce((sum, pt) => sum + pt.y, 0) / p.points.length;
-
-            const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
-            text.setAttribute('x', centerX);
-            text.setAttribute('y', centerY);
-            text.setAttribute('class', 'poly-label');
-            text.setAttribute('text-anchor', 'middle');
-            text.textContent = index + 1; // Numero identificativo
 
             polygon.onclick = (e) => {
                 e.stopPropagation();
@@ -252,6 +242,21 @@
         infoPopup.style.display = 'none';
         svg.innerHTML = '';
     }
+
+    // Zoom Pinch-to-zoom immagine finale
+    let currentScale = 1;
+    let startDistRes = 0;
+    resultLayer.addEventListener('touchstart', e => {
+        if (e.touches.length === 2) startDistRes = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
+    });
+    resultLayer.addEventListener('touchmove', e => {
+        if (e.touches.length === 2) {
+            const dist = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
+            currentScale = Math.min(Math.max(1, currentScale * (dist / startDistRes)), 4);
+            zoomContainer.style.transform = `scale(${currentScale})`;
+            startDistRes = dist;
+        }
+    });
 
     (async () => { await loadDatabase(); await initCamera(); })();
 </script>
